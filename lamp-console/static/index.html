@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lamp Console</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  #wheel { touch-action: none; cursor: crosshair; }
+  input[type=range] { accent-color: #fff; }
+  .tabpanel { display: none; }
+  .tabpanel.active { display: block; }
+</style>
+</head>
+<body class="bg-neutral-950 text-neutral-200 min-h-screen">
+<div class="min-h-screen flex flex-col max-w-5xl mx-auto px-6 py-6">
+
+  <header class="flex items-center justify-between border-b border-neutral-800 pb-4">
+    <div>
+      <h1 class="text-sm font-medium tracking-widest uppercase">Lamp Console</h1>
+      <p class="text-xs text-neutral-500 mt-1">W509Z2 · local · protocol 3.5</p>
+    </div>
+    <div class="flex items-center gap-3">
+      <span id="stateDot" class="inline-block w-2 h-2 rounded-full bg-neutral-600"></span>
+      <span id="stateText" class="text-xs text-neutral-400">unknown</span>
+      <button onclick="power(true)" class="text-xs px-4 py-2 bg-neutral-100 text-black rounded hover:bg-white">On</button>
+      <button onclick="power(false)" class="text-xs px-4 py-2 border border-neutral-700 rounded hover:border-neutral-500">Off</button>
+      <button onclick="status()" class="text-xs px-4 py-2 border border-neutral-700 rounded hover:border-neutral-500">Refresh</button>
+    </div>
+  </header>
+
+  <main class="flex-1 grid gap-6 md:grid-cols-2 py-6">
+    <section class="border border-neutral-800 rounded-lg p-5">
+      <h2 class="text-xs tracking-widest uppercase text-neutral-500 mb-4">Level</h2>
+      <label class="flex justify-between text-sm mb-2"><span>Brightness</span><span id="bv" class="text-neutral-400">1000</span></label>
+      <input id="bright" type="range" min="10" max="1000" value="1000" class="w-full" oninput="bv.textContent=this.value" onchange="bright(this.value)">
+      <p class="text-xs text-neutral-600 mt-2">DP22 · 10–1000 · shared by both modes</p>
+
+      <div class="mt-6">
+        <h2 class="text-xs tracking-widest uppercase text-neutral-500 mb-4">Mode</h2>
+        <div class="grid grid-cols-2 gap-px bg-neutral-800 border border-neutral-800 rounded overflow-hidden">
+          <button id="tabBtnWhite" class="tab px-4 py-2 text-sm bg-neutral-100 text-black" onclick="switchTab('white', true)">White</button>
+          <button id="tabBtnColor" class="tab px-4 py-2 text-sm bg-neutral-900 text-neutral-400" onclick="switchTab('color', true)">Color</button>
+        </div>
+      </div>
+
+      <div id="panelWhite" class="tabpanel active mt-6">
+        <label class="flex justify-between text-sm mb-2"><span>Temperature</span><span id="tv" class="text-neutral-400">251</span></label>
+        <input id="temp" type="range" min="0" max="1000" value="251" class="w-full" oninput="tv.textContent=this.value" onchange="temp(this.value)">
+        <p class="text-xs text-neutral-600 mt-2">DP23 · 0–1000 · warm to cold</p>
+      </div>
+
+      <div id="panelColor" class="tabpanel mt-6">
+        <div class="flex items-center gap-4">
+          <canvas id="wheel" width="260" height="260" class="w-56 h-56"></canvas>
+          <div>
+            <div id="preview" class="w-12 h-12 rounded border border-neutral-700"></div>
+            <p id="hsv" class="text-xs text-neutral-500 mt-2">h=0 s=1000 v=1000</p>
+          </div>
+        </div>
+        <label class="flex justify-between text-sm mb-2 mt-4"><span>Color value</span><span id="cv" class="text-neutral-400">1000</span></label>
+        <input id="colorV" type="range" min="50" max="1000" value="1000" class="w-full" oninput="cv.textContent=this.value; wheelSend(true)">
+        <p class="text-xs text-neutral-600 mt-2">DP24 · hue ring, saturation fixed at 1000</p>
+        <div class="flex gap-2 flex-wrap mt-3" id="presets"></div>
+      </div>
+    </section>
+
+    <section class="border border-neutral-800 rounded-lg p-5 flex flex-col">
+      <h2 class="text-xs tracking-widest uppercase text-neutral-500 mb-4">State</h2>
+      <pre id="out" class="flex-1 text-xs bg-neutral-900 rounded p-4 overflow-auto text-neutral-400">loading…</pre>
+    </section>
+  </main>
+</div>
+
+<script>
+const out = document.getElementById('out');
+async function call(path, body) {
+  const r = await fetch(path, {method: body ? 'POST' : 'GET',
+    headers: {'Content-Type': 'application/json'}, body: body ? JSON.stringify(body) : undefined});
+  const j = await r.json();
+  out.textContent = JSON.stringify(j, null, 2);
+  if (j.dps) {
+    if (j.dps['22']) { document.getElementById('bright').value = j.dps['22']; document.getElementById('bv').textContent = j.dps['22']; }
+    if (j.dps['23'] !== undefined) { document.getElementById('temp').value = j.dps['23']; document.getElementById('tv').textContent = j.dps['23']; }
+    if (j.dps['24'] && typeof j.dps['24'] === 'string' && j.dps['24'].length === 12) syncWheelFromHex(j.dps['24']);
+    if (j.dps['21'] === 'white' || j.dps['21'] === 'colour') switchTab(j.dps['21'], false);
+    const on = j.dps['20'];
+    if (on !== undefined) {
+      document.getElementById('stateDot').className = 'inline-block w-2 h-2 rounded-full ' + (on ? 'bg-emerald-400' : 'bg-neutral-600');
+      document.getElementById('stateText').textContent = on ? 'on' : 'off';
+    }
+  }
+  return j;
+}
+const status = () => call('/api/status');
+const power = (on) => call('/api/power', {on});
+const bright = (value) => call('/api/bright', {value: +value});
+const temp = (value) => call('/api/temp', {value: +value});
+function switchTab(mode, send) {
+  const isWhite = mode === 'white';
+  document.getElementById('panelWhite').classList.toggle('active', isWhite);
+  document.getElementById('panelColor').classList.toggle('active', !isWhite);
+  const w = document.getElementById('tabBtnWhite'), c = document.getElementById('tabBtnColor');
+  w.className = 'tab px-4 py-2 text-sm ' + (isWhite ? 'bg-neutral-100 text-black' : 'bg-neutral-900 text-neutral-400');
+  c.className = 'tab px-4 py-2 text-sm ' + (!isWhite ? 'bg-neutral-100 text-black' : 'bg-neutral-900 text-neutral-400');
+  if (!send) return;
+  if (isWhite) call('/api/mode', {mode: 'white'});
+  else wheelSend(false);
+}
+
+const wheel = document.getElementById('wheel');
+const ROUT = 122, RIN = 84, RMID = (ROUT + RIN) / 2;
+let curH = 0;
+const curS = 1000;
+let dragging = false, sendTimer = null;
+
+function hsvToRgb(h, s, v) {
+  const c = v * s, x = c * (1 - Math.abs(((h / 60) % 2) - 1)), m = v - c;
+  let r, g, b;
+  if (h < 60) [r,g,b]=[c,x,0]; else if (h < 120) [r,g,b]=[x,c,0];
+  else if (h < 180) [r,g,b]=[0,c,x]; else if (h < 240) [r,g,b]=[0,x,c];
+  else if (h < 300) [r,g,b]=[x,0,c]; else [r,g,b]=[c,0,x];
+  return [Math.round((r+m)*255), Math.round((g+m)*255), Math.round((b+m)*255)];
+}
+function drawWheel() {
+  const dpr = window.devicePixelRatio || 1;
+  if (wheel.width !== 260 * dpr) { wheel.width = 260*dpr; wheel.height = 260*dpr; wheel.style.width='224px'; wheel.style.height='224px'; }
+  const ctx = wheel.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const img = ctx.createImageData(260, 260);
+  for (let y = 0; y < 260; y++) for (let x = 0; x < 260; x++) {
+    const dx = x - 130, dy = y - 130, r = Math.hypot(dx, dy), i = (y*260+x)*4;
+    if (r > ROUT || r < RIN) { img.data[i+3] = 0; continue; }
+    const hue = (Math.atan2(dx, -dy) * 180 / Math.PI + 360) % 360;
+    const [rr,gg,bb] = hsvToRgb(hue, 1, 1);
+    img.data[i]=rr; img.data[i+1]=gg; img.data[i+2]=bb; img.data[i+3]=255;
+  }
+  ctx.putImageData(img, 0, 0);
+  const ang = curH * Math.PI / 180;
+  const mx = 130 + Math.sin(ang) * RMID, my = 130 - Math.cos(ang) * RMID;
+  ctx.beginPath(); ctx.arc(mx, my, 9, 0, 7); ctx.fillStyle = '#fff'; ctx.fill();
+  ctx.lineWidth = 3; ctx.strokeStyle = '#000'; ctx.stroke();
+  const [pr,pg,pb] = hsvToRgb(curH, 1, document.getElementById('colorV').value/1000);
+  document.getElementById('preview').style.background = `rgb(${pr},${pg},${pb})`;
+}
+function setFromEvent(e) {
+  const rect = wheel.getBoundingClientRect();
+  const p = e.touches ? e.touches[0] : e;
+  const dx = (p.clientX - rect.left) * (260 / rect.width) - 130;
+  const dy = (p.clientY - rect.top) * (260 / rect.height) - 130;
+  curH = Math.round((Math.atan2(dx, -dy) * 180 / Math.PI + 360) % 360);
+  drawWheel(); updateLabel();
+}
+function updateLabel() {
+  const v = +document.getElementById('colorV').value;
+  document.getElementById('hsv').textContent = `h=${curH} s=1000 v=${v}`;
+  document.getElementById('cv').textContent = v;
+}
+function wheelSend(debounced) {
+  updateLabel(); drawWheel();
+  const v = +document.getElementById('colorV').value;
+  const send = () => call('/api/color', {h: curH, s: 1000, v});
+  if (debounced) { clearTimeout(sendTimer); sendTimer = setTimeout(send, 180); }
+  else send();
+}
+wheel.addEventListener('pointerdown', e => { dragging = true; wheel.setPointerCapture(e.pointerId); setFromEvent(e); });
+wheel.addEventListener('pointermove', e => { if (dragging) { setFromEvent(e); wheelSend(true); } });
+wheel.addEventListener('pointerup', () => { dragging = false; wheelSend(false); });
+function syncWheelFromHex(hex) {
+  const h = parseInt(hex.slice(0,4), 16), v = parseInt(hex.slice(8,12), 16);
+  if ([h,v].some(isNaN)) return;
+  curH = Math.min(360, h);
+  document.getElementById('colorV').value = Math.max(50, Math.min(1000, v));
+  updateLabel(); drawWheel();
+}
+const PRESETS = [
+  ['Red', 0], ['Orange', 30], ['Yellow', 60], ['Green', 120],
+  ['Cyan', 180], ['Blue', 240], ['Violet', 280], ['Magenta', 320],
+];
+const box = document.getElementById('presets');
+for (const [name, h] of PRESETS) {
+  const b = document.createElement('button');
+  b.className = 'w-9 h-9 rounded-full border border-neutral-700 p-0';
+  b.title = `${name} h=${h}`;
+  const [r,g,bl] = hsvToRgb(h, 1, 1);
+  b.style.background = `rgb(${r},${g},${bl})`;
+  b.onclick = () => { curH = h; wheelSend(false); };
+  box.appendChild(b);
+}
+drawWheel(); updateLabel();
+status();
+</script>
+</body>
+</html>

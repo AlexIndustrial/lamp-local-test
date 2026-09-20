@@ -1,0 +1,28 @@
+# Secrets — never commit
+.env
+*.key
+*.pem
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Tuya artifacts (contain local keys)
+tinytuya.json
+devices.json
+tuya-raw.json
+snapshot.json
+tuya-login-qr.png
+tuya-session/
+*.log
+
+# Rust
+lamp-console/target/
+lamp-console/.env
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
